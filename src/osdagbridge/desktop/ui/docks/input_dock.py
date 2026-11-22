@@ -1045,6 +1045,21 @@ class InputDock(QWidget):
         else:
             print("[ERROR]: template_page.input_dictionary Not Found")
 
+    def set_value_from_external(self, key: str, value) -> None:
+        """Update a basic-input field and the shared input dictionary from CAD."""
+        widget = self._w(key)
+        if isinstance(widget, (QLineEdit, QComboBox)):
+            widget.blockSignals(True)
+            if isinstance(widget, QLineEdit):
+                widget.setText(str(value))
+            else:
+                text = str(value)
+                index = widget.findText(text)
+                if index >= 0:
+                    widget.setCurrentIndex(index)
+            widget.blockSignals(False)
+        self._update_input_dict(key, str(value))
+
     def populate_from_dict(self, data: dict) -> None:
         """
         Push all values from *data* into the input dock widgets and parent.input_dict.

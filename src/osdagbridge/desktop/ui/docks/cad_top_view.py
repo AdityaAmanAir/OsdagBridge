@@ -5,8 +5,8 @@ Author: Arushi
 """
 from osdagbridge.core.utils.common import *
 import math
-from PySide6.QtWidgets import QWidget, QPushButton, QScrollArea
-from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QSize
+from PySide6.QtWidgets import QWidget, QPushButton, QScrollArea, QLineEdit
+from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QSize, Signal
 from PySide6.QtGui import QPainter, QPen, QColor, QFont, QBrush, QPolygonF, QIcon
 from .cad_cross_section import CrossSectionCADWidget
 
@@ -27,6 +27,7 @@ LEADER_TEXT_OFFSET = 25    # leader label distance
 
 class TopViewCADWidget(QWidget):
     """Widget for drawing bridge top view"""
+    parameter_edit_requested = Signal(str, float)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -37,6 +38,7 @@ class TopViewCADWidget(QWidget):
         
         # top view hover tracking 
         self.top_view_hover_zones = []  # list of (QRectF, element_type)
+        self.editable_label_zones = []
         self.hovered_top_view_element = None
         
         # Zoom level for this widget
@@ -477,9 +479,66 @@ class TopViewCADWidget(QWidget):
             self.hovered_top_view_element = new_hovered
             self.update()
 
+    def _register_editable_label(self, painter, x, y, text, key, unit):
+        metrics = painter.fontMetrics()
+        lines = text.split("\n")
+        width = max(metrics.boundingRect(line).width() for line in lines)
+        height = metrics.height() * len(lines)
+        rect = QRectF(x - 4, y - height - 4, width + 8, height + 8)
+        self.editable_label_zones.append((rect, key, unit))
+
+    def mouseDoubleClickEvent(self, event):
+        pos = event.position() if hasattr(event, 'position') else event.pos()
+        for rect, key, unit in getattr(self, 'editable_label_zones', []):
+            if rect.contains(pos):
+                self._start_label_edit(rect, key, unit)
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
+
+    def _start_label_edit(self, rect: QRectF, key: str, unit: str):
+        if getattr(self, '_parameter_editor', None) is not None:
+            self._parameter_editor.close()
+
+        values = {
+            KEY_SPAN: self.params['span_length'] / 1000.0,
+            KEY_TS_GIRDER_SPACING: self.params['girder_spacing'] / 1000.0,
+        }
+        value = values.get(key)
+        if value is None:
+            return
+
+        editor = QLineEdit(self)
+        editor.setText(f"{value:.2f}")
+        editor.selectAll()
+        editor.setGeometry(rect.toRect())
+        editor.setStyleSheet(
+            "QLineEdit { background:white; border:2px solid #90AF13;"
+            " color:black; font-size:11px; padding:1px 3px; }"
+        )
+        editor.editingFinished.connect(lambda: self._commit_label_edit(editor, key, unit))
+        editor.show()
+        editor.setFocus()
+        editor.raise_()
+        self._parameter_editor = editor
+
+    def _commit_label_edit(self, editor: QLineEdit, key: str, unit: str):
+        if getattr(self, '_parameter_editor', None) is not editor:
+            return
+        try:
+            value = float(editor.text().strip())
+        except (TypeError, ValueError):
+            editor.close()
+            self._parameter_editor = None
+            return
+        editor.close()
+        self._parameter_editor = None
+        self.parameter_edit_requested.emit(key, value)
+
     def paintEvent(self, event):
         # clear hover zones at start of each paint
         self.top_view_hover_zones = []
+        self.editable_label_zones = []
         
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -592,6 +651,15 @@ class TopViewCADWidget(QWidget):
             
             self.draw_text_with_background(painter, text_x - text_width/2, text_y, text, 
                                         QColor(255, 255, 255, 240), QColor(0, 0, 0), 9, False)
+            if text.startswith("Span Length"):
+                self._register_editable_label(
+                    painter,
+                    text_x - text_width / 2,
+                    text_y,
+                    text,
+                    KEY_SPAN,
+                    "m",
+                )
         else:
             top_arrow = [
                 QPointF(x1, y1),
@@ -1335,6 +1403,10 @@ class TopViewCADWidget(QWidget):
                 label_text,
                 QColor(255, 255, 255, 240),
                 QColor(0, 0, 0), 9, False
+            )
+            self._register_editable_label(
+                painter, label_x, label_y, label_text,
+                KEY_TS_GIRDER_SPACING, "m"
             )
 
         # CL OF BEARING labels - ALWAYS VISIBLE (moved outside hover condition)

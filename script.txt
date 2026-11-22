@@ -1,0 +1,13 @@
+Greetings to Everybody,
+Myself Aditya Aman 
+and in this video I will be explainig the change that have done for the FOSSEE Osdag Winter Internship - 2026 
+The osdag project categorie is Software Development in UI, 2D CAD, and plotting Enhancements..
+Lets move on to the task 
+In order the 1st sub task, my changes were:
+
+I implemented direct parameter editing inside the 2D CAD views.
+I added a temporary input box for double-clicked dimension labels.
+The editable labels are carriageway width, girder spacing, deck thickness, and span length.
+Each accepted value is validated using the existing bridge validators.
+Valid values are synchronized with the shared input dictionary and the main input fields.
+Overhang, overall bridge width, and bracing spacing remain read-only CAD labels.

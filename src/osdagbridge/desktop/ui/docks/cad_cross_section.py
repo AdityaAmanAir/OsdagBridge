@@ -5,8 +5,8 @@ Author: Arushi
 """
 
 import math
-from PySide6.QtWidgets import QWidget, QPushButton, QScrollArea
-from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QSize
+from PySide6.QtWidgets import QWidget, QPushButton, QScrollArea, QLineEdit
+from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QSize, Signal
 from PySide6.QtGui import QPainter, QPen, QColor, QFont, QBrush, QPolygonF, QIcon, QPixmap
 from osdagbridge.core.utils.common import *
 from osdagbridge.desktop.cad.irc5_geometry import (
@@ -18,6 +18,8 @@ from osdagbridge.desktop.cad.irc5_geometry import (
 
 class CrossSectionCADWidget(QWidget):
     """Widget for drawing bridge cross-section view"""
+    parameter_edit_requested = Signal(str, float)
+
     # ===== SHARED CAD COLORS =====
     GIRDER_COLOR = QColor(179, 180, 160) 
     STIFFENER_COLOR = QColor(210, 210, 205)
@@ -46,6 +48,7 @@ class CrossSectionCADWidget(QWidget):
         self.median_type = None
         # hover label regions: list of (QRectF, text, bg_color, text_color)
         self.hover_labels = []
+        self.editable_label_zones = []
         self.hovered_label_index = -1
         self.hovered_element = None  # Track hovered element for highlighting
         self.cross_section_hover_zones = []  # Store hover zones as (QRectF, element_type)
@@ -720,6 +723,66 @@ class CrossSectionCADWidget(QWidget):
             self.hovered_element = new_hovered_element
             self.update()
 
+    def _register_editable_label(self, painter, x, y, text, key, unit):
+        """Store a hit zone for a label that may be edited by double-click."""
+        font = painter.font()
+        metrics = painter.fontMetrics()
+        lines = text.split("\n")
+        width = max(metrics.boundingRect(line).width() for line in lines)
+        height = metrics.height() * len(lines)
+        rect = QRectF(x - 4, y - height - 4, width + 8, height + 8)
+        self.editable_label_zones.append((rect, key, unit))
+
+    def mouseDoubleClickEvent(self, event):
+        pos = event.position() if hasattr(event, 'position') else event.pos()
+        for rect, key, unit in getattr(self, 'editable_label_zones', []):
+            if rect.contains(pos):
+                self._start_label_edit(rect, key, unit)
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
+
+    def _start_label_edit(self, rect: QRectF, key: str, unit: str):
+        if getattr(self, '_parameter_editor', None) is not None:
+            self._parameter_editor.close()
+
+        values = {
+            KEY_CARRIAGEWAY_WIDTH: self.params['carriageway_width'] / 1000.0,
+            KEY_TS_GIRDER_SPACING: self.params['girder_spacing'] / 1000.0,
+            KEY_TS_DECK_THICKNESS: self.params['deck_thickness'],
+        }
+        value = values.get(key)
+        if value is None:
+            return
+
+        editor = QLineEdit(self)
+        editor.setText(f"{value:.2f}" if unit == "m" else f"{value:.0f}")
+        editor.selectAll()
+        editor.setGeometry(rect.toRect())
+        editor.setStyleSheet(
+            "QLineEdit { background:white; border:2px solid #90AF13;"
+            " color:black; font-size:11px; padding:1px 3px; }"
+        )
+        editor.editingFinished.connect(lambda: self._commit_label_edit(editor, key, unit))
+        editor.show()
+        editor.setFocus()
+        editor.raise_()
+        self._parameter_editor = editor
+
+    def _commit_label_edit(self, editor: QLineEdit, key: str, unit: str):
+        if getattr(self, '_parameter_editor', None) is not editor:
+            return
+        text = editor.text().strip()
+        try:
+            value = float(text)
+        except (TypeError, ValueError):
+            editor.close()
+            self._parameter_editor = None
+            return
+        editor.close()
+        self._parameter_editor = None
+        self.parameter_edit_requested.emit(key, value)
+
         
     def paintEvent(self, event):
         # Position buttons on first paint if not done yet
@@ -729,6 +792,7 @@ class CrossSectionCADWidget(QWidget):
         # clear hover labels and zones at start of each paint
         self.hover_labels = []
         self.cross_section_hover_zones = []
+        self.editable_label_zones = []
         
         painter = QPainter(self)
         try:
@@ -848,6 +912,21 @@ class CrossSectionCADWidget(QWidget):
             
             self.draw_text_with_background(painter, text_x - text_width/2, text_y, text, 
                                         QColor(255, 255, 255, 255), QColor(0, 0, 0), 9, False)
+            editable_keys = {
+                "Carriageway Width": (KEY_CARRIAGEWAY_WIDTH, "m"),
+                "Girder Spacing": (KEY_TS_GIRDER_SPACING, "m"),
+            }
+            for label, (key, unit) in editable_keys.items():
+                if text.startswith(label):
+                    self._register_editable_label(
+                        painter,
+                        text_x - text_width / 2,
+                        text_y,
+                        text,
+                        key,
+                        unit,
+                    )
+                    break
         else:
             top_arrow = [
                 QPointF(x1, y1),
@@ -2287,6 +2366,10 @@ class CrossSectionCADWidget(QWidget):
             
             self.draw_text_with_background(painter, text_x, text_y, text,
                                         QColor(255, 255, 255, 255), QColor(0, 0, 0), 9, False)
+            self._register_editable_label(
+                painter, text_x, text_y, text,
+                KEY_TS_DECK_THICKNESS, "mm"
+            )
     def add_cross_section_hover_labels(self, painter, carriageway_start_x, carriageway_end_x,
                     left_barrier_x, right_barrier_x, deck_top_y, deck_bottom_y,
                     deck_thick_px, positions, base_y, scale, n, fp_config,

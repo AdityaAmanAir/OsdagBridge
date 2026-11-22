@@ -18,6 +18,7 @@ from osdagbridge.desktop.ui.cad_3d import CAD3DWindow
 
 from osdagbridge.core.bridge_types.plate_girder.ui_fields import FrontendData
 from osdagbridge.core.bridge_types.plate_girder.defaults import BASIC_INPUT_DICT, solve_extend_basic_input_dict
+from osdagbridge.core.bridge_types.plate_girder.validator import BridgeInputValidator
 from osdagbridge.core.utils.common import *
 from osdagbridge.core.utils.osi_validator import validate_osi_inputs
 from osdagbridge.core.utils.logger import bridge_logger
@@ -901,6 +902,50 @@ class CustomWindow(QWidget):
 
         # Apply state to CAD UI & Update Cad-State
         self.cad_comp_widget.update_from_osdag_inputs(self.input_dict)
+
+    def apply_cad_parameter_edit(self, key: str, value: float) -> None:
+        """Validate and synchronize a numeric parameter edited on the 2D CAD."""
+        validator = BridgeInputValidator()
+        candidate = dict(self.input_dict)
+        candidate[key] = value
+
+        result = None
+        if key in (KEY_SPAN, KEY_CARRIAGEWAY_WIDTH):
+            result = validator.validate_basic_inputs(key, candidate)
+        elif key in (KEY_TS_GIRDER_SPACING, KEY_TS_DECK_THICKNESS):
+            result = validator.validate_additional_inputs(key, candidate)
+
+        corrected_value = value
+        message = None
+        if isinstance(result, tuple) and len(result) == 2:
+            corrected_value, message = result
+        elif result is not None:
+            corrected_value = result
+
+        if abs(float(corrected_value) - float(value)) > 1e-9:
+            CustomMessageBox(
+                title="Invalid CAD Value",
+                text=message or "The entered value is outside the permitted range.",
+                dialogType=MessageBoxType.Warning,
+            ).exec()
+
+        self.input_dict[key] = corrected_value
+
+        if key in (KEY_SPAN, KEY_CARRIAGEWAY_WIDTH):
+            setter = getattr(self.input_dock, "set_value_from_external", None)
+            if callable(setter):
+                setter(key, corrected_value)
+
+        if self._additional_inputs_dialog is not None:
+            self._additional_inputs_dialog.set_input_dictionary(dict(self.input_dict))
+
+        try:
+            solve_extend_basic_input_dict(self.input_dict)
+        except Exception:
+            pass
+
+        self.input_dock.is_require_field_changed = True
+        self.update_cad_from_inputs()
 
     #---------------------------------Docking-Icons-Functionality-START----------------------------------------------
 

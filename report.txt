@@ -1,0 +1,20 @@
+Task: Interactive 2D CAD Parameter Editing
+
+Problem:
+The 2D CAD displayed bridge dimensions as plain text. Users could change only through the main input panels, and there was no direct way to edit fundamental parameters from the CAD canvas.
+
+Changes made:
+- Added editable label hit zones to the cross-section and top-view CAD widgets.
+- Enabled double-click editing for carriageway width, girder spacing, deck thickness, and span length.
+- Added temporary QLineEdit boxes that open at the selected label location.
+- Added Enter and focus-loss handling through QLineEdit editingFinished.
+- Added validation before applying a CAD-entered value.
+- Connected CAD edits to the template page so values update the shared input dictionary.
+- Synced basic inputs back to the input dock and additional inputs back to the additional-input dialog.
+- Triggered the existing CAD redraw/update flow after successful edits.
+- Kept overhang, overall bridge width, and bracing spacing as read-only labels.
+
+Thought process:
+I followed the existing data flow instead of maintaining a separate CAD-only value store. The CAD widgets already received parameters through update_from_osdag_inputs, so the edit feature was built as a reverse update: label hit zone, temporary editor, validation, shared dictionary update, UI synchronization, and redraw.
+The cross-section and top-view widgets emit the parameter key and numeric value to BridgeDualCADWidget. BridgeDualCADWidget forwards it to CustomWindow, which owns the main input dictionary.
+The existing BridgeInputValidator is reused so CAD edits follow the same numerical limits and standards-based rules as normal input fields.

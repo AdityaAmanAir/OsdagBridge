@@ -49,6 +49,9 @@ class BridgeDualCADWidget(QWidget):
         
         # Create cross-section scroll area
         self.cross_section_widget = CrossSectionCADWidget(self)
+        self.cross_section_widget.parameter_edit_requested.connect(
+            self._on_parameter_edit_requested
+        )
         # self.cross_section_widget.setMinimumSize(800, 600)
         
         self.cross_scroll = QScrollArea()
@@ -61,6 +64,9 @@ class BridgeDualCADWidget(QWidget):
         
         # Create top view scroll area
         self.top_view_widget = TopViewCADWidget(self)
+        self.top_view_widget.parameter_edit_requested.connect(
+            self._on_parameter_edit_requested
+        )
         # self.top_view_widget.setMinimumSize(800, 600)
         
         self.top_scroll = QScrollArea()
@@ -146,6 +152,12 @@ class BridgeDualCADWidget(QWidget):
             int(base_height * self.top_zoom_level)
         )
         self.top_view_widget.update()
+
+    def _on_parameter_edit_requested(self, key: str, value: float):
+        template = self.parent()
+        handler = getattr(template, "apply_cad_parameter_edit", None)
+        if callable(handler):
+            handler(key, value)
     
     def update_from_osdag_inputs(self, input_dict):
         """
