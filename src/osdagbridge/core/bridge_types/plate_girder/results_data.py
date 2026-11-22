@@ -408,15 +408,22 @@ def _build_full_data(model, edge_dist: float = 0.0, dataset=None, lazy: bool = F
     disp_components = [str(
         c) for c in ds0["displacements"].coords["Component"].values] if "displacements" in ds0.data_vars else []
 
-    # Classify members: longitudinal = both nodes share same Z and same Y
+    # Classify members.  Prefer ospgrillage groups because coordinate-only
+    # classification can mislabel slab/diaphragm members in skewed bridges.
+    explicit_transverse: set[int] = set()
+    for group_name in ("start_edge", "end_edge", "transverse_slab"):
+        explicit_transverse.update(groups.get(group_name, []))
+
     _z_tol = 1e-3
     longitudinal_members = []
     transverse_members = []
     for tag, (n1, n2) in members.items():
         if n1 not in nodes or n2 not in nodes:
             continue
-        if (abs(nodes[n1][2] - nodes[n2][2]) < _z_tol and
-                abs(nodes[n1][1] - nodes[n2][1]) < _z_tol):
+        if tag in explicit_transverse:
+            transverse_members.append(tag)
+        elif (abs(nodes[n1][2] - nodes[n2][2]) < _z_tol and
+              abs(nodes[n1][1] - nodes[n2][1]) < _z_tol):
             longitudinal_members.append(tag)
         else:
             transverse_members.append(tag)
@@ -427,6 +434,7 @@ def _build_full_data(model, edge_dist: float = 0.0, dataset=None, lazy: bool = F
         "groups": groups,
         "longitudinal_members": longitudinal_members,
         "transverse_members": transverse_members,
+        "transverse_member_ids": list(transverse_members),
         "edge_dist": float(edge_dist),
         "loadcases": list(loadcases),
         "force_components": force_components,

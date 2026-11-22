@@ -81,3 +81,93 @@ The dialog is treated as a transaction.  Widget edits remain temporary until Sav
 them to default_input_dict and emits CAD refresh.  Close is guarded against accidental
 data loss, and Custom fields are validated at the UI boundary so incomplete values do
 not become the saved state.
+
+Task III: Transverse-Member Result Plotting
+
+Problem and location:
+The plotting view in mpl_plot_widget.py previously populated an Analysis Member dropdown
+from only longitudinal girders (G1, G2, ...).  The Matplotlib force and deflection builders
+in plot_generator.py also iterated only longitudinal girder chains.  Raw OpenSeesPy element
+results could contain end diaphragms and intermediate cross-bracing elements, but they were
+not exposed as a grouped selectable plot member.
+
+Core result-data location:
+The data extraction is now explicitly routed through
+src/osdagbridge/core/bridge_types/plate_girder/results_data.py.
+
+- _build_nodes_members() reads live node coordinates and element node connectivity from
+  openseespy (ops.getNodeTags(), ops.getEleTags(), ops.nodeCoord(), ops.eleNodes()).
+- _build_full_data() receives the shared ospgrillage xarray dataset.
+- It reads standard ospgrillage element groups start_edge, end_edge, and transverse_slab
+  through model.get_element(..., options="elements").
+- It then adds transverse_member_ids to the flat result dictionary.  This key contains raw
+  OpenSeesPy element tags, not human-readable girder names.
+- The explicit standard groups override coordinate-only guessing.  Remaining elements are
+  classified as longitudinal or transverse by node coordinates:
+  longitudinal elements connect nodes with the same Y and Z coordinates;
+  every valid element that is not longitudinal is kept in transverse_members.
+- _build_full_data() stores force_components and disp_components from the xarray dataset,
+  and stores load-case-specific force/displacement tables before post-processing.
+- results_data_post_processing.py now preserves transverse_member_ids in OUTPUT_KEYS so the
+  UI can receive raw transverse element tags after chains/girder structures are enriched.
+
+Why this is different from a GUI-only change:
+The GUI does not read OpenSeesPy directly for this feature.  The selection in the output
+dock sends "Transverse Members" to MplPlotWidget.  MplPlotWidget receives raw element tags
+from PlateGirderBridge.get_transverse_member_ids(), which reads PlateGirderBridge.result_data,
+populated by BridgeGrillageModel.get_result_data() -> results_data.restructure_data().
+This keeps node/element mapping and component extraction in the plate-girder core.
+
+End-to-end data flow:
+1. Analyser completes the bridge analysis and provides its xarray dataset.
+2. results_data.restructure_data() reads nodes/members and builds the flat result dictionary.
+3. It explicitly marks end diaphragms/slab cross-elements and intermediate cross bracing
+   as transverse, and stores their raw element tags in transverse_member_ids.
+4. PlateGirderBridge stores this dictionary in self.result_data and exposes it through
+   get_result_data() and get_transverse_member_ids().
+5. template_page.py passes ds_all, load cases, nodes, members, edge distance, and
+   transverse IDs into MplPlotWidget.setup().
+6. output_dock.py refresh_member_dropdown() adds "Transverse Members" after All and the
+   longitudinal girder choices.
+7. When selected, MplPlotWidget.update_plot() passes selected_girder="Transverse Members"
+   to the active SFD, BMD, or deflection builder.
+8. plot_generator.py resolves raw tags, reads the selected load case's i/j element force
+   components or node displacement components, and draws the grouped transverse members.
+
+Plot/UI changes:
+- output_dock.py: the Analysis Member QComboBox now contains All, G1/G2/etc., and
+  "Transverse Members".
+- mpl_plot_widget.py: setup() stores transverse_member_ids and update_plot() forwards them
+  to build_figure_sfd(), build_figure_bmd(), and build_figure_deflection().
+- plot_generator.py:
+  _get_transverse_member_ids() prefers the result_data mapping and has a coordinate
+  classification fallback for compatibility.
+  _plot_transverse_force_members() extracts i/j values for one selected load case.
+  _plot_transverse_displacements() extracts node x/y/z values for one selected load case.
+  SFD, BMD, and deflection branches return plots and summary data grouped under
+  "Transverse Members".
+- _get_bg_nodes_members() filters the visible grillage background to transverse element
+  tags when the dropdown selection is "Transverse Members".
+
+Component mapping:
+- Force components:
+  Fx -> Vx_i/Vx_j
+  Fy -> Vy_i/Vy_j
+  Fz -> Vz_i/Vz_j
+  Mx (torsion Tx) -> Mx_i/Mx_j
+  My -> My_i/My_j
+  Mz -> Mz_i/Mz_j
+- Displacement components:
+  Dx -> x
+  Dy -> y
+  Dz -> z
+- The selected load case is already supplied by MplPlotWidget as
+  ds = self._ds_all.sel(Loadcase=loadcase), so both force and displacement values come
+  from the same selected load case/combination.
+
+Technical thought process:
+The task does not require separate plots for every cross-bracing chord or diagonal.
+Therefore the implementation deliberately makes one UI selection and one summary key:
+"Transverse Members".  The core mapping retains raw element IDs, allowing the plot builder
+to distinguish transverse elements from longitudinal elements and to use all i/j force
+values or node displacement values instead of duplicating engineering logic in the UI.

@@ -18,3 +18,10 @@ This includes custom load and wind values plus custom crash barrier, median, rai
 The save action is blocked until all required Custom fields are filled.
 I also added Save, Discard, and Cancel handling when the dialog is closed with unsaved changes.
 The implementation keeps the saved dictionary separate from the temporary working dictionary, preventing accidental data loss.
+
+For the third sub task, I expanded the plotting view to support transverse members.
+The member dropdown now includes Transverse Members alongside All and the girder choices.
+The transverse element tags are extracted in results_data.py, not guessed inside the drawing widget.
+End diaphragms and intermediate cross-bracing elements are grouped under one transverse plot selection.
+The selected load case is used when reading force and displacement components.
+This supports axial force, shear forces, torsion, bending moments, and x, y, z displacements for the transverse elements.

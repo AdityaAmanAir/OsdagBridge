@@ -171,6 +171,8 @@ class MplPlotWidget(QWidget):
         self._loadcases = []
         self._nodes     = {}
         self._members   = {}
+        self._transverse_member_ids = []
+        self._result_data = {}
         self._edge_dist = 0.0
         self._output_dock = None
         self._summary_data = {}
@@ -407,12 +409,17 @@ class MplPlotWidget(QWidget):
                     pass
 
     def setup(self, ds_all, loadcases: list, nodes: dict, members: dict,
-              edge_dist: float = 0.0):
+              edge_dist: float = 0.0, transverse_member_ids: list[int] | None = None,
+              result_data: dict | None = None):
         self._ds_all    = ds_all
         self._loadcases = list(loadcases)
         self._nodes     = nodes
         self._members   = members
         self._edge_dist = edge_dist
+        self._transverse_member_ids = [
+            int(tag) for tag in (transverse_member_ids or [])
+        ]
+        self._result_data = result_data if isinstance(result_data, dict) else {}
 
         if hasattr(self, '_fig') and self._fig.axes:
             ax = self._fig.axes[0]
@@ -542,19 +549,28 @@ class MplPlotWidget(QWidget):
             self._fig, self._summary_data = build_figure_sfd(
                 ds, force_key, self._nodes, self._members,
                 edge_dist=self._edge_dist, eng_scale=eng_scale,
-                selected_girder=sel_girder
+                selected_girder=sel_girder,
+                transverse_member_ids=self._transverse_member_ids,
+                result_data=self._result_data,
+                loadcase=loadcase,
             )
         elif force_key in _DEFL_KEYS:
             self._fig, self._summary_data = build_figure_deflection(
                 ds, force_key, self._nodes, self._members,
                 edge_dist=self._edge_dist, eng_scale=eng_scale,
-                selected_girder=sel_girder
+                selected_girder=sel_girder,
+                transverse_member_ids=self._transverse_member_ids,
+                result_data=self._result_data,
+                loadcase=loadcase,
             )
         else:
             self._fig, self._summary_data = build_figure_bmd(
                 ds, force_key, self._nodes, self._members,
                 edge_dist=self._edge_dist, eng_scale=eng_scale,
-                selected_girder=sel_girder
+                selected_girder=sel_girder,
+                transverse_member_ids=self._transverse_member_ids,
+                result_data=self._result_data,
+                loadcase=loadcase,
             )
 
         self._attach_figure(self._fig)

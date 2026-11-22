@@ -3910,6 +3910,27 @@ class PlateGirderBridge:
         """Return (nodes, members) dicts built from the active openseespy model."""
         return build_nodes_members()
 
+    def get_result_data(self) -> dict:
+        """Return the post-processed flat result dictionary used by plot and design consumers."""
+        return self.result_data if isinstance(self.result_data, dict) else {}
+
+    def get_transverse_member_ids(self) -> list[int]:
+        """Return raw element tags classified as transverse by results_data.py."""
+        result_data = self.get_result_data()
+        ids = result_data.get("transverse_member_ids", [])
+        if ids:
+            return [int(tag) for tag in ids]
+
+        # Compatibility fallback for older/cached result_data dictionaries.
+        transverse = result_data.get("transverse_members", [])
+        raw_ids: list[int] = []
+        for item in transverse:
+            if isinstance(item, dict):
+                raw_ids.extend(int(tag) for tag in item.get("members", []) if str(tag).isdigit())
+            elif isinstance(item, (int, str)) and str(item).isdigit():
+                raw_ids.append(int(item))
+        return raw_ids
+
     def get_edge_dist(self) -> float:
         """Return the deck overhang distance (0.0 when no overhang)."""
         return self.output_dict.get(KEY_TS_DECK_OVERHANG) or 0.0

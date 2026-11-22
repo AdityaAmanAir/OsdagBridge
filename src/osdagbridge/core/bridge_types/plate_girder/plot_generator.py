@@ -123,6 +123,136 @@ def _find_girders(nodes, members, z_tol=3):
     return dict(sorted(girders.items()))
 
 
+def _get_transverse_member_ids(nodes, members, transverse_member_ids=None):
+    """Return raw transverse element tags, preferring results_data.py mapping."""
+    if transverse_member_ids:
+        known = {int(tag) for tag in transverse_member_ids}
+        return [tag for tag in members if tag in known]
+
+    # Compatibility fallback: nodes with changing lateral/height coordinates
+    # are transverse; longitudinal elements have equal Y and Z coordinates.
+    transverse = []
+    z_tol = 1e-3
+    for tag, (n1, n2) in members.items():
+        if n1 not in nodes or n2 not in nodes:
+            continue
+        c1, c2 = nodes[n1], nodes[n2]
+        if not (abs(c1[2] - c2[2]) < z_tol and abs(c1[1] - c2[1]) < z_tol):
+            transverse.append(tag)
+    return transverse
+
+
+def _plot_transverse_force_members(ax, ds, nodes, members, transverse_ids,
+                                   comp_i_name, comp_j_name, v_scale,
+                                   color, fill_color, result_data=None, loadcase=None):
+    """Plot all transverse element i/j forces as one Transverse Members selection."""
+    if not transverse_ids:
+        return {}, 0.0, 0.0
+
+    def find_component(name):
+        for component in ds["forces"].coords["Component"].values:
+            if str(component).lower() == str(name).lower():
+                return component
+        return None
+
+    actual_i = find_component(comp_i_name)
+    actual_j = find_component(comp_j_name)
+    if actual_i is None or actual_j is None:
+        return {}, 0.0, 0.0
+
+    values = []
+    raw_values = []
+    for tag in transverse_ids:
+        if tag not in members:
+            continue
+        n1, n2 = members[tag]
+        if n1 not in nodes or n2 not in nodes:
+            continue
+        c1, c2 = nodes[n1], nodes[n2]
+        value_i = value_j = None
+        if isinstance(result_data, dict) and loadcase:
+            force_row = (
+                result_data.get("forces", {})
+                .get(str(loadcase), {})
+                .get(str(tag), {})
+            )
+            value_i = force_row.get(actual_i)
+            value_j = force_row.get(actual_j)
+        if value_i is None or value_j is None:
+            try:
+                value_i = float(ds["forces"].sel(Element=tag, Component=actual_i).values) / 1000.0
+                value_j = float(ds["forces"].sel(Element=tag, Component=actual_j).values) / 1000.0
+            except Exception:
+                continue
+        else:
+            value_i = float(value_i) / 1000.0
+            value_j = float(value_j) / 1000.0
+
+        vi = value_i * v_scale
+        vj = value_j * v_scale
+        values.extend([vi, vj])
+        raw_values.extend([value_i, value_j])
+
+        xs = [c1[0], c2[0]]
+        ys = [c1[2], c2[2]]
+        ax.plot(xs, ys, [vi, vj], color=color, linewidth=2.0, zorder=6)
+        ax.scatter(xs, ys, [vi, vj], color=color, s=18, zorder=7, depthshade=False)
+
+    if not values:
+        return {}, 0.0, 0.0
+    summary = {"Transverse Members": {"max": float(max(raw_values)), "min": float(min(raw_values))}}
+    return summary, float(min(values)), float(max(values))
+
+
+def _plot_transverse_displacements(ax, ds, nodes, members, transverse_ids,
+                                   target_component, v_scale, color,
+                                   result_data=None, loadcase=None):
+    """Plot node displacements for the grouped transverse-member selection."""
+    available = [str(c) for c in ds["displacements"].coords["Component"].values]
+    actual = next((c for c in available if c.lower() == target_component.lower()), None)
+    if actual is None:
+        return {}, 0.0, 0.0
+
+    values = []
+    raw_values = []
+    for tag in transverse_ids:
+        if tag not in members:
+            continue
+        n1, n2 = members[tag]
+        if n1 not in nodes or n2 not in nodes:
+            continue
+        c1, c2 = nodes[n1], nodes[n2]
+        v1 = v2 = None
+        if isinstance(result_data, dict) and loadcase:
+            disp_table = result_data.get("displacements", {}).get(str(loadcase), {})
+            v1 = disp_table.get(str(n1), {}).get(actual)
+            v2 = disp_table.get(str(n2), {}).get(actual)
+        if v1 is None or v2 is None:
+            try:
+                v1 = float(ds["displacements"].sel(Node=n1, Component=actual).values) * 1000.0
+                v2 = float(ds["displacements"].sel(Node=n2, Component=actual).values) * 1000.0
+            except Exception:
+                continue
+        else:
+            v1 = float(v1) * 1000.0
+            v2 = float(v2) * 1000.0
+        if target_component.lower() in ("y", "z"):
+            v1, v2 = -v1, -v2
+        v1 *= v_scale
+        v2 *= v_scale
+        values.extend([v1, v2])
+        raw_values.extend([v1 / v_scale if v_scale != 0 else v1, v2 / v_scale if v_scale != 0 else v2])
+        ax.plot([c1[0], c2[0]], [c1[2], c2[2]], [v1, v2],
+                color=color, linewidth=2.0, zorder=6)
+        ax.scatter([c1[0], c2[0]], [c1[2], c2[2]], [v1, v2],
+                   color=color, s=18, zorder=7, depthshade=False)
+
+    if not values:
+        return {}, 0.0, 0.0
+    summary = {"Transverse Members": {"max": float(max(raw_values)), "min": float(min(raw_values))}}
+    return summary, float(min(values)), float(max(values))
+
+
 def _build_polyline(elems, members, nodes, force_i, force_j, ds):
     """
     Build arrays (xs, ys, zs, vals, node_ids) for one girder.
@@ -374,9 +504,19 @@ def _add_coordinate_triad(ax, nodes, scale=0.12, eng_scale: float = 1.0):
     ax.set_ylim(ylim)
     ax.set_zlim(zlim)
     
-def _get_bg_nodes_members(nodes, members, edge_dist, selected_girder, girder_items):
+def _get_bg_nodes_members(nodes, members, edge_dist, selected_girder, girder_items,
+                          transverse_member_ids=None):
     if selected_girder == "All":
         return nodes, members
+    if selected_girder == "Transverse Members":
+        filtered_nodes = {}
+        filtered_members = {}
+        transverse_ids = _get_transverse_member_ids(nodes, members, transverse_member_ids)
+        for tag in transverse_ids:
+            filtered_members[tag] = members[tag]
+            for node in members[tag]:
+                filtered_nodes[node] = nodes[node]
+        return filtered_nodes, filtered_members
     filtered_nodes = {}
     filtered_members = {}
     for i, (z_val, elems) in enumerate(girder_items):
@@ -650,7 +790,9 @@ def build_figure_grillage(nodes, members, edge_dist=0.0, selected_girder="All"):
 # SFD PLOT
 # =============================================================================
 
-def build_figure_sfd(ds, force_key, nodes, members, edge_dist=0.0, eng_scale=1.0, selected_girder="All"):
+def build_figure_sfd(ds, force_key, nodes, members, edge_dist=0.0, eng_scale=1.0,
+                     selected_girder="All", transverse_member_ids=None,
+                     result_data=None, loadcase=None):
     """
     Build a 3-D matplotlib figure showing the Shear Force Diagram.
     """
@@ -683,7 +825,10 @@ def build_figure_sfd(ds, force_key, nodes, members, edge_dist=0.0, eng_scale=1.0
     girder_items  = list(girders.items())
     n_girders     = len(girder_items)
 
-    bg_nodes, bg_members = _get_bg_nodes_members(nodes, members, edge_dist, selected_girder, girder_items)
+    bg_nodes, bg_members = _get_bg_nodes_members(
+        nodes, members, edge_dist, selected_girder, girder_items,
+        transverse_member_ids=transverse_member_ids,
+    )
 
     _add_grillage_background(
         ax, bg_nodes, bg_members,
@@ -692,6 +837,28 @@ def build_figure_sfd(ds, force_key, nodes, members, edge_dist=0.0, eng_scale=1.0
         include_end_transverse=False,
         show_inner_nodes=False,
     )
+
+    if selected_girder == "Transverse Members":
+        shear_color = "#1565C0"
+        transverse_ids = _get_transverse_member_ids(
+            nodes, members, transverse_member_ids
+        )
+        summary_data, global_vmin, global_vmax = _plot_transverse_force_members(
+            ax, ds, nodes, members, transverse_ids,
+            comp_i_name, comp_j_name, v_scale,
+            shear_color, "#90CAF9",
+            result_data=result_data, loadcase=loadcase,
+        )
+        ax.set_title(f"{disp_key} -- Transverse Members")
+        ax.set_zlim(
+            min(-1.0, global_vmin),
+            max(1.0, global_vmax),
+        )
+        ax.text2D(0.02, 0.96, f"{disp_key}: Transverse Members",
+                  transform=ax.transAxes, fontsize=12, fontweight="bold")
+        _add_supports(ax, nodes, members, edge_dist=edge_dist,
+                      selected_girder="All")
+        return fig, summary_data
     
     shear_color = "#1565C0"
     fill_color  = "#90CAF9"
@@ -897,7 +1064,9 @@ def build_figure_sfd(ds, force_key, nodes, members, edge_dist=0.0, eng_scale=1.0
 # BMD PLOT
 # =============================================================================
 
-def build_figure_bmd(ds, force_key, nodes, members, edge_dist=0.0, eng_scale=1.0, selected_girder="All"):
+def build_figure_bmd(ds, force_key, nodes, members, edge_dist=0.0, eng_scale=1.0,
+                     selected_girder="All", transverse_member_ids=None,
+                     result_data=None, loadcase=None):
     """
     Build a 3-D matplotlib figure showing the Bending Moment Diagram.
 
@@ -936,7 +1105,10 @@ def build_figure_bmd(ds, force_key, nodes, members, edge_dist=0.0, eng_scale=1.0
     girder_items_bmd = list(girders.items())
     n_girders_bmd    = len(girder_items_bmd)
 
-    bg_nodes, bg_members = _get_bg_nodes_members(nodes, members, edge_dist, selected_girder, girder_items_bmd)
+    bg_nodes, bg_members = _get_bg_nodes_members(
+        nodes, members, edge_dist, selected_girder, girder_items_bmd,
+        transverse_member_ids=transverse_member_ids,
+    )
 
     _add_grillage_background(
         ax, bg_nodes, bg_members,
@@ -945,6 +1117,26 @@ def build_figure_bmd(ds, force_key, nodes, members, edge_dist=0.0, eng_scale=1.0
         include_end_transverse=False,
         show_inner_nodes=False,
     )
+
+    if selected_girder == "Transverse Members":
+        moment_color = "#C62828"
+        transverse_ids = _get_transverse_member_ids(
+            nodes, members, transverse_member_ids
+        )
+        summary_data, global_vmin, global_vmax = _plot_transverse_force_members(
+            ax, ds, nodes, members, transverse_ids,
+            comp_i_name, comp_j_name, v_scale,
+            moment_color, "#EF9A9A",
+            result_data=result_data, loadcase=loadcase,
+        )
+        ax.set_title(f"{disp_key} -- Transverse Members")
+        ax.set_zlim(
+            min(-1.0, global_vmin),
+            max(1.0, global_vmax),
+        )
+        ax.text2D(0.02, 0.96, f"{disp_key}: Transverse Members",
+                  transform=ax.transAxes, fontsize=12, fontweight="bold")
+        return fig, summary_data
 
     moment_color = "#C62828"
     fill_color   = "#EF9A9A"
@@ -1287,7 +1479,9 @@ def build_figure_bmd(ds, force_key, nodes, members, edge_dist=0.0, eng_scale=1.0
 # DEFLECTION PLOT
 # =============================================================================
 
-def build_figure_deflection(ds, disp_key, nodes, members, edge_dist=0.0, eng_scale=1.0, selected_girder="All"):
+def build_figure_deflection(ds, disp_key, nodes, members, edge_dist=0.0, eng_scale=1.0,
+                            selected_girder="All", transverse_member_ids=None,
+                            result_data=None, loadcase=None):
     """
     Build a 3-D matplotlib figure showing the Deflection Diagram.
     """
@@ -1310,7 +1504,10 @@ def build_figure_deflection(ds, disp_key, nodes, members, edge_dist=0.0, eng_sca
     girder_items = list(girders.items())
     n_girders    = len(girder_items)
 
-    bg_nodes, bg_members = _get_bg_nodes_members(nodes, members, edge_dist, selected_girder, girder_items)
+    bg_nodes, bg_members = _get_bg_nodes_members(
+        nodes, members, edge_dist, selected_girder, girder_items,
+        transverse_member_ids=transverse_member_ids,
+    )
 
     _add_grillage_background(
         ax, bg_nodes, bg_members,
@@ -1319,6 +1516,28 @@ def build_figure_deflection(ds, disp_key, nodes, members, edge_dist=0.0, eng_sca
         include_end_transverse=False,
         show_inner_nodes=False,
     )
+
+    if selected_girder == "Transverse Members":
+        defl_color = "#6A1B9A"
+        transverse_ids = _get_transverse_member_ids(
+            nodes, members, transverse_member_ids
+        )
+        target_component = {
+            "Dx": "x", "Dy": "y", "Dz": "z",
+        }.get(disp_key, str(comp_name).lower())
+        summary_data, global_vmin, global_vmax = _plot_transverse_displacements(
+            ax, ds, nodes, members, transverse_ids,
+            target_component, v_scale, defl_color,
+            result_data=result_data, loadcase=loadcase,
+        )
+        ax.set_title(f"{disp_label} -- Transverse Members")
+        ax.set_zlim(
+            min(-1.0, global_vmin),
+            max(1.0, global_vmax),
+        )
+        ax.text2D(0.02, 0.96, f"{disp_label}: Transverse Members",
+                  transform=ax.transAxes, fontsize=12, fontweight="bold")
+        return fig, summary_data
 
     defl_color = "#6A1B9A"   # deep purple
     base_color = "#388E3C"   # green baseline
