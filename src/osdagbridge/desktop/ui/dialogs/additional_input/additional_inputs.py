@@ -50,6 +50,9 @@ class AdditionalInputs(QDialog):
         self.working_input_dict = {}
         # Last confirmed-good spacing and girder count; restored if solver raises an error
         self._last_good_layout: dict = {}
+        # Snapshot of the last successfully saved state.  Used for dirty-state
+        # tracking and to restore the dialog after an explicit discard.
+        self._saved_snapshot: dict = {}
 
         # TO tract additional input is opened first time or not.
         # This is required for end connectors
@@ -228,9 +231,14 @@ class AdditionalInputs(QDialog):
             return True
         return super().eventFilter(obj, event)
 
-    def set_input_dictionary(self, input_dict: dict):  # lifecycle: sets default/working dicts and wires END_CONNECTORS on first open
-        self.default_input_dict = input_dict
-        self.working_input_dict = deepcopy(input_dict)
+    def set_input_dictionary(self, input_dict: dict, preserve_working: bool = False):  # lifecycle: sets default/working dicts and wires END_CONNECTORS on first open
+        if preserve_working:
+            self.default_input_dict.update(input_dict)
+            self.working_input_dict.update(input_dict)
+        else:
+            self.default_input_dict = deepcopy(input_dict)
+            self.working_input_dict = deepcopy(input_dict)
+            self._saved_snapshot = deepcopy(input_dict)
 
         self.set_defaults()
 
@@ -508,6 +516,15 @@ class AdditionalInputs(QDialog):
 
     def _save_inputs(self):  # on_change: validates all tabs then commits working_input_dict and emits CAD update signal
 
+        # Sync last-edited line edits before validation.  This matters when Save
+        # is clicked without a previous editingFinished signal.
+        self._sync_visible_widgets_to_working_dict()
+
+        custom_errors = self._collect_empty_custom_field_errors()
+        if custom_errors:
+            self._show_validation_errors(custom_errors)
+            return False
+
         # Flush the currently-displayed stiffener member's widgets before committing.
         # _save_stiffener_member_data otherwise only runs when switching *away* from a
         # member (via _on_stiffener_member_load), so the last-viewed girder (e.g. G4)
@@ -528,6 +545,153 @@ class AdditionalInputs(QDialog):
             buttons=["OK"],
             dialogType=MessageBoxType.Success,
         ).exec()
+        self._saved_snapshot = deepcopy(self.working_input_dict)
+        return True
+
+    def _sync_visible_widgets_to_working_dict(self) -> None:
+        """Best-effort sync of visible controls to working_input_dict."""
+        for widget in self.findChildren(QLineEdit):
+            key = widget.objectName()
+            if not key or not widget.isVisible():
+                continue
+            text = widget.text().strip()
+            if not text:
+                if key.endswith(".value"):
+                    self.working_input_dict[key] = None
+                else:
+                    self.working_input_dict[key] = self.default_input_dict.get(key)
+                continue
+            try:
+                self.working_input_dict[key] = int(text)
+            except (ValueError, TypeError):
+                try:
+                    self.working_input_dict[key] = float(text)
+                except (ValueError, TypeError):
+                    self.working_input_dict[key] = text
+
+        for widget in self.findChildren(QComboBox):
+            key = widget.objectName()
+            if key and widget.isVisible():
+                self.working_input_dict[key] = widget.currentText()
+
+        for widget in self.findChildren(QCheckBox):
+            key = widget.objectName()
+            if key and widget.isVisible():
+                self.working_input_dict[key] = widget.isChecked()
+
+    def _collect_empty_custom_field_errors(self) -> list[str]:
+        """Return user-facing errors for enabled Custom fields left empty."""
+        errors: list[str] = []
+        checked: set[str] = set()
+
+        # MODE_LINE fields expose keys as "<field>.mode" and "<field>.value".
+        for mode_combo in self.findChildren(QComboBox):
+            mode_key = mode_combo.objectName()
+            if not mode_key.endswith(".mode") or not mode_combo.isVisible():
+                continue
+            if mode_combo.currentText().strip().lower() != "custom":
+                continue
+            value_key = mode_key[:-5] + ".value"
+            value_widget = self.findChild(QLineEdit, value_key)
+            if value_widget is None or not value_widget.isVisible() or not value_widget.isEnabled():
+                continue
+            if value_key not in checked and not value_widget.text().strip():
+                checked.add(value_key)
+                label = mode_key[:-5].replace(".", " ").replace("_", " ")
+                errors.append(f"Custom value is required for: {label}.")
+
+        # Custom geometry/material selections have their own editable fields.
+        custom_groups = [
+            (
+                KEY_CB_TYPE,
+                [
+                    (KEY_CB_DENSITY, "Crash barrier density"),
+                    (KEY_CB_WIDTH, "Crash barrier width"),
+                    (KEY_CB_HEIGHT, "Crash barrier height"),
+                    (KEY_CB_AREA, "Crash barrier area"),
+                    (KEY_CB_LOAD, "Crash barrier load"),
+                ],
+            ),
+            (
+                KEY_MD_TYPE,
+                [
+                    (KEY_MD_DENSITY, "Median density"),
+                    (KEY_MD_WIDTH, "Median width"),
+                    (KEY_MD_HEIGHT, "Median height"),
+                    (KEY_MD_AREA, "Median area"),
+                    (KEY_MD_LOAD, "Median load"),
+                ],
+            ),
+            (
+                KEY_RL_TYPE,
+                [
+                    (KEY_RL_WIDTH, "Railing width"),
+                    (KEY_RL_HEIGHT, "Railing height"),
+                ],
+            ),
+            (
+                KEY_WC_MATERIAL,
+                [(KEY_WC_DENSITY, "Wearing course density")],
+            ),
+        ]
+        for selector_key, fields in custom_groups:
+            selector = self.findChild(QComboBox, selector_key)
+            if selector is None or selector.currentText().strip().lower() != "custom":
+                continue
+            for field_key, label in fields:
+                field = self.findChild(QLineEdit, field_key)
+                if field is None or not field.isVisible() or not field.isEnabled():
+                    continue
+                if field_key not in checked and not field.text().strip():
+                    checked.add(field_key)
+                    errors.append(f"{label} is required when Custom is selected.")
+
+        return errors
+
+    def _has_unsaved_changes(self) -> bool:
+        self._sync_visible_widgets_to_working_dict()
+        return deepcopy(self.working_input_dict) != deepcopy(self._saved_snapshot)
+
+    def closeEvent(self, event) -> None:
+        if self._has_unsaved_changes():
+            choice = CustomMessageBox(
+                title="Unsaved Changes",
+                text="Additional input changes have not been saved.",
+                informativeText="Save changes, discard them, or return to editing.",
+                buttons=["Save", "Discard", "Cancel"],
+                dialogType=MessageBoxType.Warning,
+            ).exec()
+            if choice == "Save":
+                if not self._save_inputs():
+                    event.ignore()
+                    return
+            elif choice == "Discard":
+                self.working_input_dict = deepcopy(self._saved_snapshot)
+                self.set_defaults()
+            else:
+                event.ignore()
+                return
+        super().closeEvent(event)
+
+    def reject(self) -> None:
+        # Reuse the same warning path as the title-bar close button.
+        if self._has_unsaved_changes():
+            choice = CustomMessageBox(
+                title="Unsaved Changes",
+                text="Additional input changes have not been saved.",
+                informativeText="Save changes, discard them, or return to editing.",
+                buttons=["Save", "Discard", "Cancel"],
+                dialogType=MessageBoxType.Warning,
+            ).exec()
+            if choice == "Save":
+                if not self._save_inputs():
+                    return
+            elif choice == "Discard":
+                self.working_input_dict = deepcopy(self._saved_snapshot)
+                self.set_defaults()
+            else:
+                return
+        super().reject()
 
     def _show_validation_errors(self, errors):  # utility: displays validation error list in a warning popup
         message = "\n\n".join(f"• {err}" for err in errors)

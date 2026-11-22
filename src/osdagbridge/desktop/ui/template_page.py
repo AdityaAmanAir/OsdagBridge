@@ -937,7 +937,9 @@ class CustomWindow(QWidget):
                 setter(key, corrected_value)
 
         if self._additional_inputs_dialog is not None:
-            self._additional_inputs_dialog.set_input_dictionary(dict(self.input_dict))
+            self._additional_inputs_dialog.set_input_dictionary(
+                dict(self.input_dict), preserve_working=True
+            )
 
         try:
             solve_extend_basic_input_dict(self.input_dict)

@@ -1,20 +1,83 @@
-Task: Interactive 2D CAD Parameter Editing
+Task I: Interactive 2D CAD Parameter Editing
 
-Problem:
-The 2D CAD displayed bridge dimensions as plain text. Users could change only through the main input panels, and there was no direct way to edit fundamental parameters from the CAD canvas.
+Problem and location:
+The engineering values in the 2D views were read-only painted text.  The cross-section
+label rendering was in cad_cross_section.py and the top/plan labels were in cad_top_view.py.
+No click event existed to transfer a CAD-entered value back to the main input dictionaries.
+As a result, users had to leave the CAD and edit the corresponding Input Dock or Additional
+Inputs fields manually.
 
-Changes made:
-- Added editable label hit zones to the cross-section and top-view CAD widgets.
-- Enabled double-click editing for carriageway width, girder spacing, deck thickness, and span length.
-- Added temporary QLineEdit boxes that open at the selected label location.
-- Added Enter and focus-loss handling through QLineEdit editingFinished.
-- Added validation before applying a CAD-entered value.
-- Connected CAD edits to the template page so values update the shared input dictionary.
-- Synced basic inputs back to the input dock and additional inputs back to the additional-input dialog.
-- Triggered the existing CAD redraw/update flow after successful edits.
-- Kept overhang, overall bridge width, and bracing spacing as read-only labels.
+Core/engineering changes:
+- The bridge numerical state is still owned by the shared input dictionary in CustomWindow,
+  and not copied into a separate calculation store.
+- Span and carriageway width remain Basic Input keys:
+  KEY_SPAN and KEY_CARRIAGEWAY_WIDTH.
+- Girder spacing and deck thickness remain Additional Input keys:
+  KEY_TS_GIRDER_SPACING and KEY_TS_DECK_THICKNESS.
+- The existing BridgeInputValidator in core/bridge_types/plate_girder/validator.py
+  remains the authority for limits.  CAD values are not sent directly to geometry or
+  engineering solvers without validation.
+- Overhang, overall bridge width, and bracing spacing are not editable because they are
+  derived/layout values and can otherwise create inconsistent geometry.
 
-Thought process:
-I followed the existing data flow instead of maintaining a separate CAD-only value store. The CAD widgets already received parameters through update_from_osdag_inputs, so the edit feature was built as a reverse update: label hit zone, temporary editor, validation, shared dictionary update, UI synchronization, and redraw.
-The cross-section and top-view widgets emit the parameter key and numeric value to BridgeDualCADWidget. BridgeDualCADWidget forwards it to CustomWindow, which owns the main input dictionary.
-The existing BridgeInputValidator is reused so CAD edits follow the same numerical limits and standards-based rules as normal input fields.
+UI/data-flow changes:
+- cad_cross_section.py registers double-click hit zones for carriageway width, girder
+  spacing, and deck thickness.
+- cad_top_view.py registers hit zones for girder spacing and span length.
+- Each widget creates a temporary QLineEdit at the selected label location.  Enter or
+  focus loss completes editing through editingFinished.
+- Both CAD widgets emit (key, numeric_value) through a parameter_edit_requested signal.
+- cad_dual_view.py forwards that signal to CustomWindow.apply_cad_parameter_edit().
+- TemplatePage applies the validator correction, updates the shared input dictionary,
+  and synchronizes the Basic Input line edit or Additional Inputs working dictionary.
+- The existing update_from_osdag_inputs() and updateParams()/redraw methods then refresh
+  both CAD views.
+
+Technical thought process:
+The implementation follows the existing architecture instead of adding a second CAD
+state system.  CAD labels act as editors for canonical engineering keys, while
+CustomWindow remains the single owner of the live input state.
+
+Task II: Additional Inputs Dialog Validation and State Management
+
+Problem and location:
+The Save action in additional_inputs.py committed the working dictionary immediately.
+It did not block a Custom mode whose required value was empty.  The close button and
+Escape/reject paths also closed the dialog without warning users that they might lose
+unsaved edits.
+
+Core/engineering changes:
+- Pre-save validation now checks Custom mode selections before the working dictionary
+  is committed.
+- TYPE_MODE_LINE fields use "<key>.mode" for the mode and "<key>.value" for the custom
+  numeric/engineering value.  A mode equal to "Custom" requires a non-empty value line.
+- Custom crash-barrier, median, railing, and wearing-course selections require their
+  enabled engineering fields to be populated:
+  density, width, height, area, load, and/or post geometry as applicable.
+- Validation is UI-focused and prevents an incomplete Custom configuration from reaching
+  saved input data.  The numerical design rules in validator.py remain authoritative for
+  ordinary engineering ranges.
+- The saved/working dictionaries remain separate:
+  default_input_dict holds defaults/reload values,
+  working_input_dict holds temporary dialog edits,
+  _saved_snapshot records the last successful Save state.
+
+UI/state-management changes:
+- _sync_visible_widgets_to_working_dict() captures the final visible widget values before
+  Save or dirty-state comparison.
+- _collect_empty_custom_field_errors() creates a clear warning listing the missing Custom
+  fields and blocks _save_inputs() when any are incomplete.
+- _save_inputs() now returns a success/failure result and updates _saved_snapshot only
+  after the commit is accepted.
+- closeEvent() and reject() show Save / Discard / Cancel choices if the working state
+  differs from the saved snapshot.
+- Save runs pre-save validation first; Discard restores the saved snapshot and updates
+  widgets; Cancel leaves the dialog open.
+- set_input_dictionary() can preserve unsaved working values for external CAD updates,
+  while normal open/load/reset operations replace the working dictionary deliberately.
+
+Technical thought process:
+The dialog is treated as a transaction.  Widget edits remain temporary until Save commits
+them to default_input_dict and emits CAD refresh.  Close is guarded against accidental
+data loss, and Custom fields are validated at the UI boundary so incomplete values do
+not become the saved state.

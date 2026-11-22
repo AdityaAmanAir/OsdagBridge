@@ -11,3 +11,10 @@ The editable labels are carriageway width, girder spacing, deck thickness, and s
 Each accepted value is validated using the existing bridge validators.
 Valid values are synchronized with the shared input dictionary and the main input fields.
 Overhang, overall bridge width, and bracing spacing remain read-only CAD labels.
+
+For the second sub task, I improved the Additional Inputs dialog.
+Before saving, it now checks every Custom mode field for a missing value.
+This includes custom load and wind values plus custom crash barrier, median, railing, and wearing course fields.
+The save action is blocked until all required Custom fields are filled.
+I also added Save, Discard, and Cancel handling when the dialog is closed with unsaved changes.
+The implementation keeps the saved dictionary separate from the temporary working dictionary, preventing accidental data loss.
