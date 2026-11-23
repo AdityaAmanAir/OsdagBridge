@@ -28,6 +28,7 @@ LEADER_TEXT_OFFSET = 25    # leader label distance
 class TopViewCADWidget(QWidget):
     """Widget for drawing bridge top view"""
     parameter_edit_requested = Signal(str, float)
+    parameter_edit_invalid = Signal(str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -530,6 +531,7 @@ class TopViewCADWidget(QWidget):
         except (TypeError, ValueError):
             editor.close()
             self._parameter_editor = None
+            self.parameter_edit_invalid.emit(key)
             return
         editor.close()
         self._parameter_editor = None
@@ -1535,6 +1537,11 @@ class TopViewCADWidget(QWidget):
         
         self.draw_text_with_background(painter, text_x - text_width/2, text_y, text, 
                                     QColor(255, 255, 255, 240), QColor(0, 0, 0), 9, False)
+        if text.startswith("Span Length"):
+            self._register_editable_label(
+                painter, text_x - text_width / 2, text_y,
+                text, KEY_SPAN, "m"
+            )
 
 
     def draw_skewed_dimension_arrow(self, painter, x1, y1, x2, y2, text, skew_rad):

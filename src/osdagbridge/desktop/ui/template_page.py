@@ -935,7 +935,21 @@ class CustomWindow(QWidget):
                 dialogType=MessageBoxType.Warning,
             ).exec()
 
-        self.input_dict[key] = corrected_value
+        candidate[key] = corrected_value
+        try:
+            solve_extend_basic_input_dict(
+                candidate,
+                changed_field="spacing" if key == KEY_TS_GIRDER_SPACING else "girders",
+            )
+        except (TypeError, ValueError) as exc:
+            CustomMessageBox(
+                title="Invalid CAD Value",
+                text=str(exc),
+                dialogType=MessageBoxType.Warning,
+            ).exec()
+            return
+
+        self.input_dict.update(candidate)
 
         if key in (KEY_SPAN, KEY_CARRIAGEWAY_WIDTH):
             setter = getattr(self.input_dock, "set_value_from_external", None)
@@ -947,13 +961,16 @@ class CustomWindow(QWidget):
                 dict(self.input_dict), preserve_working=True
             )
 
-        try:
-            solve_extend_basic_input_dict(self.input_dict)
-        except Exception:
-            pass
-
-        self.input_dock.is_require_field_changed = True
+        self.input_dock.is_require_field_changed = key != KEY_TS_GIRDER_SPACING
         self.update_cad_from_inputs()
+
+    def show_invalid_cad_parameter_edit(self) -> None:
+        """Report a non-numeric value entered directly on the 2D CAD."""
+        CustomMessageBox(
+            title="Invalid CAD Value",
+            text="Enter a valid numeric value for the selected CAD parameter.",
+            dialogType=MessageBoxType.Warning,
+        ).exec()
 
     #---------------------------------Docking-Icons-Functionality-START----------------------------------------------
 

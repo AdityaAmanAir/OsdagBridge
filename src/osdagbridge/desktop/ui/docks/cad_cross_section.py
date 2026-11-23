@@ -19,6 +19,7 @@ from osdagbridge.desktop.cad.irc5_geometry import (
 class CrossSectionCADWidget(QWidget):
     """Widget for drawing bridge cross-section view"""
     parameter_edit_requested = Signal(str, float)
+    parameter_edit_invalid = Signal(str)
 
     # ===== SHARED CAD COLORS =====
     GIRDER_COLOR = QColor(179, 180, 160) 
@@ -778,6 +779,7 @@ class CrossSectionCADWidget(QWidget):
         except (TypeError, ValueError):
             editor.close()
             self._parameter_editor = None
+            self.parameter_edit_invalid.emit(key)
             return
         editor.close()
         self._parameter_editor = None

@@ -182,7 +182,12 @@ class BridgeInputValidator:
         if key == KEY_TS_GIRDER_SPACING:
             v = self._to_float(inputs.get(key))
             overall = self._to_float(inputs.get(KEY_TS_OVERALL_WIDTH))
-            max_gs = (overall / 2) if overall else None
+            no_of_girders = self._to_int(inputs.get(KEY_TS_NO_OF_GIRDERS))
+            max_gs = (
+                overall / (no_of_girders - 1)
+                if overall is not None and no_of_girders is not None and no_of_girders > 1
+                else (overall / 2 if overall else None)
+            )
             if v is None: return 0.5, "Girder spacing must be a numeric value."
             if v < 0.5:   return 0.5, "Girder spacing is outside the practical range allowed in the software."
             if max_gs is not None and v > max_gs:

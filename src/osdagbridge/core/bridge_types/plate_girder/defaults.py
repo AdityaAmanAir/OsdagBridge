@@ -182,7 +182,8 @@ def _update_typical_section_defaults(input_dict: dict) -> None:
         input_dict.update({key: value})
 
     # --- Deck Detail sub-tab ---
-    _update(KEY_TS_DECK_THICKNESS,     250.0)                        # mm
+    if input_dict.get(KEY_TS_DECK_THICKNESS) in (None, ""):
+        _update(KEY_TS_DECK_THICKNESS, 250.0)                        # mm
     _update(KEY_TS_FOOTPATH_WIDTH,     IS_DEFAULT_FOOTPATH_WIDTH_M)  # m
     _update(KEY_TS_FOOTPATH_THICKNESS, 100.0)                        # mm
 
@@ -867,7 +868,9 @@ def seed_no_of_girders(overall_width: float) -> int:
         raise ValueError("Overall bridge width must be positive.")
     return max(2, ceil(overall_width / DEFAULT_GIRDER_SPACING))
 
-def solve_extend_basic_input_dict(basic_input_dict: dict) -> None:
+def solve_extend_basic_input_dict(
+    basic_input_dict: dict, changed_field: str = "girders"
+) -> None:
     """Parse basic inputs and solve bridge layout. Updates basic_input_dict in-place."""
     from .initial_sizing import BridgeConfigurationSolver
 
@@ -916,7 +919,12 @@ def solve_extend_basic_input_dict(basic_input_dict: dict) -> None:
         basic_input_dict.get(KEY_TS_NO_OF_GIRDERS)
         or seed_no_of_girders(solver.calculate_overall_bridge_width())
     )
-    sizing_result = solver._solve_layout(no_of_girders=no_of_girders, changed_field='girders')
+    girder_spacing = float(basic_input_dict.get(KEY_TS_GIRDER_SPACING) or 0.0)
+    sizing_result = solver._solve_layout(
+        no_of_girders=no_of_girders,
+        girder_spacing=girder_spacing,
+        changed_field=changed_field,
+    )
 
     print("[DEBUG] Bridge Layout Sizing Result:")
     print(f"  overall_width = {sizing_result.overall_width} m")
@@ -936,4 +944,3 @@ def solve_extend_basic_input_dict(basic_input_dict: dict) -> None:
 
     # Update Dynamic per-girder/member keys
     _on_no_of_girders_changed(basic_input_dict)
-

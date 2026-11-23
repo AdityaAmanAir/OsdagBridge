@@ -1434,6 +1434,19 @@ VALUES_CUSTOM_AXLE_TYPE = ["Single", "Bogie"]
 VALUES_FOOTPATH_PRESSURE_MODE = ["Automatic", "User-defined"]
 VALUES_SUPPORT_TYPE = ["Fixed", "Pinned"]
 
+# ── Additional-input Custom-mode validation ──────────────────────────────────
+VALUE_CUSTOM = "Custom"
+SUFFIX_MODE_WIDGET = ".mode"
+SUFFIX_VALUE_WIDGET = ".value"
+
+CUSTOM_DEPENDENT_KEYS = {
+    KEY_CB_TYPE: (KEY_CB_DENSITY, KEY_CB_WIDTH, KEY_CB_HEIGHT, KEY_CB_AREA, KEY_CB_LOAD),
+    KEY_MD_TYPE: (KEY_MD_DENSITY, KEY_MD_WIDTH, KEY_MD_HEIGHT, KEY_MD_AREA, KEY_MD_LOAD),
+    KEY_RL_TYPE: (KEY_RL_WIDTH, KEY_RL_HEIGHT),
+    KEY_RL_LOAD_MODE: (KEY_RL_LOAD_VALUE,),
+    KEY_WC_MATERIAL: (KEY_WC_DENSITY,),
+}
+
 #Sail thic
 SAIL_APPROVED_THICKNESS_VALUES=[
         "8", "10", "12", "14", "16", "18", "20", "22", "25", "28", "32", "36",

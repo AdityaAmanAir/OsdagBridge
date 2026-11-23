@@ -20,6 +20,7 @@ class BridgeDualCADWidget(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._template_page = parent
         self.cross_zoom_level = 1.0
         self.top_zoom_level = 1.0
         self.cross_visible = True
@@ -52,6 +53,9 @@ class BridgeDualCADWidget(QWidget):
         self.cross_section_widget.parameter_edit_requested.connect(
             self._on_parameter_edit_requested
         )
+        self.cross_section_widget.parameter_edit_invalid.connect(
+            self._on_parameter_edit_invalid
+        )
         # self.cross_section_widget.setMinimumSize(800, 600)
         
         self.cross_scroll = QScrollArea()
@@ -66,6 +70,9 @@ class BridgeDualCADWidget(QWidget):
         self.top_view_widget = TopViewCADWidget(self)
         self.top_view_widget.parameter_edit_requested.connect(
             self._on_parameter_edit_requested
+        )
+        self.top_view_widget.parameter_edit_invalid.connect(
+            self._on_parameter_edit_invalid
         )
         # self.top_view_widget.setMinimumSize(800, 600)
         
@@ -154,10 +161,16 @@ class BridgeDualCADWidget(QWidget):
         self.top_view_widget.update()
 
     def _on_parameter_edit_requested(self, key: str, value: float):
-        template = self.parent()
+        template = self._template_page
         handler = getattr(template, "apply_cad_parameter_edit", None)
         if callable(handler):
             handler(key, value)
+
+    def _on_parameter_edit_invalid(self, _key: str):
+        template = self._template_page
+        handler = getattr(template, "show_invalid_cad_parameter_edit", None)
+        if callable(handler):
+            handler()
     
     def update_from_osdag_inputs(self, input_dict):
         """
