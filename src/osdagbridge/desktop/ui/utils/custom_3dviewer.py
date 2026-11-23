@@ -268,10 +268,13 @@ class CustomViewer3d(qtViewer3d):
         overlay_parent = parent if parent is not None else self
         self.navcube = NavCubeOverlay(overlay_parent)
         self.navcube.hide()
-        self._overlay_anchor = overlay_parent
+        self.navcube.installEventFilter(self)
+        self._navcube_drag_offset: QPoint | None = None
+        self._navcube_user_position: QPoint | None = None
+        self._overlay_anchor_parent = overlay_parent
+        self._overlay_anchors = set()
+        self._refresh_overlay_anchors()
         self._navcube_sync: OCCNavCubeSync | None = None  # created once view is ready
-        if self._overlay_anchor is not None and self._overlay_anchor is not self:
-            self._overlay_anchor.installEventFilter(self)
         self.destroyed.connect(self._teardown_navcube)
 
         # ---------------- Navigation state ----------------
@@ -350,6 +353,7 @@ class CustomViewer3d(qtViewer3d):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._refresh_overlay_anchors()
         self._resize_navcube()
         self._position_navcube()
         self._position_axis_triad()
@@ -385,10 +389,12 @@ class CustomViewer3d(qtViewer3d):
             return
 
         padding = 10
-        local_pos = QPoint(
-            max(0, self.width() - self.navcube.width() - padding),
-            padding,
-        )
+        local_pos = self._navcube_user_position
+        if local_pos is None:
+            local_pos = QPoint(
+                max(0, self.width() - self.navcube.width() - padding),
+                padding,
+            )
 
         if host is self:
             target_pos = local_pos
@@ -422,15 +428,54 @@ class CustomViewer3d(qtViewer3d):
         else:
             target_pos = host.mapFromGlobal(self.mapToGlobal(local_pos))
         self._axis_triad.setGeometry(target_pos.x(), target_pos.y(), sz, sz)
-        if self._axis_triad.isVisible():
-            self._axis_triad.raise_()
 
     def apply_triad_delta(self, dx: float, dy: float):
         """No-op — kept for compatibility. Triad now syncs via poll timer."""
         pass
 
+    def _refresh_overlay_anchors(self):
+        anchors = {self._overlay_anchor_parent, self.window()}
+        for anchor in self._overlay_anchors - anchors:
+            anchor.removeEventFilter(self)
+        for anchor in anchors - self._overlay_anchors:
+            if anchor is not self:
+                anchor.installEventFilter(self)
+        self._overlay_anchors = anchors
+
     def eventFilter(self, watched, event):
-        if watched is getattr(self, "_overlay_anchor", None):
+        if watched is getattr(self, "navcube", None):
+            if (
+                event.type() == QEvent.MouseButtonDblClick
+                and event.button() == Qt.LeftButton
+            ):
+                global_pos = event.globalPosition().toPoint()
+                self._navcube_drag_offset = (
+                    global_pos - self.navcube.frameGeometry().topLeft()
+                )
+                self.navcube.setCursor(Qt.SizeAllCursor)
+                event.accept()
+                return True
+            if (
+                event.type() == QEvent.MouseMove
+                and self._navcube_drag_offset is not None
+                and event.buttons() & Qt.LeftButton
+            ):
+                target_pos = event.globalPosition().toPoint() - self._navcube_drag_offset
+                self.navcube.move(target_pos)
+                self._navcube_user_position = self.mapFromGlobal(target_pos)
+                return True
+            if (
+                event.type() == QEvent.MouseButtonRelease
+                and self._navcube_drag_offset is not None
+            ):
+                self._navcube_drag_offset = None
+                self.navcube.unsetCursor()
+                event.accept()
+                return True
+
+        if watched in getattr(self, "_overlay_anchors", ()):
+            if event.type() == QEvent.ParentChange:
+                self._refresh_overlay_anchors()
             if event.type() in (
                 QEvent.Move,
                 QEvent.Resize,
@@ -439,10 +484,14 @@ class CustomViewer3d(qtViewer3d):
             ):
                 self._position_navcube()
                 self._position_axis_triad()
-                if hasattr(self, "navcube") and self.navcube and self.navcube.isVisible():
-                    self.navcube.raise_()
-                if hasattr(self, "_axis_triad") and self._axis_triad and self._axis_triad.isVisible():
-                    self._axis_triad.raise_()
+                if event.type() in (QEvent.Show, QEvent.WindowStateChange):
+                    if hasattr(self, "navcube") and self.navcube.isVisible():
+                        self.navcube.raise_()
+                    if (
+                        hasattr(self, "_axis_triad")
+                        and self._axis_triad.isVisible()
+                    ):
+                        self._axis_triad.raise_()
         return super().eventFilter(watched, event)
 
     def set_node_hover_data(self, nodes: list | None) -> None:
